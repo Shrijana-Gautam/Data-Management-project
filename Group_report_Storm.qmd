@@ -1,0 +1,1761 @@
+---
+title: "Weather Event Trends, Casualties, and Property Damage Analyses Across the United States (2015–2024)"
+author: "Shrijana Gautam and Aidan Kieft "
+format:
+  html:
+    page-layout: full
+    toc: true
+    toc-depth: 2
+    toc-expand: 2
+    toc-location: left
+    toc-title: Contents
+    number-sections: true
+    smooth-scroll: true
+    code-fold: true
+    code-tools: true
+    embed-resources: true
+excute:
+  cache: true
+editor: visual
+editor_options: 
+  chunk_output_type: console
+theme:
+  light: pandoc
+  dark: cyborg
+---
+
+::: panel-tabset
+# Executive summary
+
+## **Abstract**
+
+Through the National Oceanic and Atmospheric Administration (NOAA) database on severe weather events, there is significant room for analysis, interpretation, and prediction on how these events impact the United States. Our report on reported severe weather occurrences from 2015-2024 is centered around event trends, fatalities, injuries, property and crop damages, and regional risk assessments. The project explores frequency of weather events, human impacts by gender and age, alongside the financial consequences of natural disasters across the U.S., with a special emphasis on Northeastern states. The goal is to gain insight on the most vulnerable areas and demographics so further safety precautions can be set in place. Alongside safety concerns, companies and homeowners can greatly benefit from knowing the risks of property damage in each state. Discovering trends in this data and creating an accessible database where further analysis can be gleaned could help policymakers target aid, and promote mindfulness in citizens on the risks a given weather event could pose.
+
+## **Results**
+
+The number of weather event reports per year remained relatively stable across the time frame observed (2015-2024).
+
+Thunderstorms, winter weather, and high wind were the most common event types throughout the year. Northeastern states experienced more winter weather and strong winds than thunderstorms compared to the average.
+
+Fatalities were heavily skewed toward individuals located in vehicles, open areas, and water bodies among the entries that contained location information
+
+Fatalities showed a bimodal age distribution, with peaks around ages 20–25 and 50–60.
+
+Gender analysis revealed that men were over 2 times more likely to die in a weather related event.
+
+Total fatalities in each year steadily rose, with the difference between the early and late averages being close to 750 incidents apart.
+
+Hurricane impacts were most severe in southern coastal states, particularly Texas, Louisiana, Florida, Georgia, and North Carolina.
+
+Tornadoes caused the most damage and casualties in states such as Mississippi, Kentucky, Tennessee, Alabama and Texas. Heavy Snow was most dangerous in Minnesota, Washington and California.
+
+Adjusted for population size in 2020, Arizona, Nevada, Hawaii, South Dakota and Wyoming exhibited the highest risk of weather-related death, while Connecticut, Massachusetts, Delaware and other Northeastern states were the safest.
+
+In the Northeast, Vermont had the highest fatality rate, while Maine and New Hampshire showed higher injury risks.
+
+The most deadly events were excessive heat, flash floods, rip currents, and tornadoes. Heat-related deaths were by far the most common, with totals in the 9 year observed period reaching 6x the total from the second highest entry, flash flood.
+
+These key findings support the need for targeted public safety efforts, especially regarding areas that may need to further invest in disaster preparedness, infrastructure resilience, and public safety.
+
+# Detailed report
+
+```{r, error=FALSE,message=FALSE, warning=FALSE}
+library(leaflet)
+library(DBI)
+library(RSQLite)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+
+
+setwd("../BIST/5225/Final/Report/")
+
+#Creates a data frame from the SQL database noaa_data_copy for 
+#the location data
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+res <- dbSendQuery(con, "SELECT * FROM LOCATIONS")
+L_all <- dbFetch(res)
+dbClearResult(res)
+
+#Creates a data frame from the SQL database noaa_data_copy for 
+#the fatality data
+res <- dbSendQuery(con, "SELECT * FROM FATALITY")
+F_all <- dbFetch(res)
+dbClearResult(res)
+
+#Creates a data frame from the SQL database noaa_data_copy for 
+#the details data
+res <- dbSendQuery(con, "SELECT * FROM DETAILS")
+D_all <- dbFetch(res)
+dbClearResult(res)
+dbDisconnect(con)
+
+# Coerce TOR_OTHER_CZ_FIPS to character in all datasets
+convert_to_char <- function(df) {
+  df %>% mutate(TOR_OTHER_CZ_FIPS = as.character(TOR_OTHER_CZ_FIPS))
+}
+
+D_all <- convert_to_char(D_all)
+```
+
+```{r error=FALSE,message=FALSE, warning=FALSE}
+#data cleaning
+F_all <- F_all %>%
+  # Convert age to numeric, handling non-numeric entries
+  mutate(FATALITY_AGE = as.numeric(gsub("[^0-9]", "", FATALITY_AGE))) %>%
+  # Clean location data
+  mutate(FATALITY_LOCATION = trimws(toupper(FATALITY_LOCATION)),
+         FATALITY_LOCATION = ifelse(FATALITY_LOCATION == "", "UNKNOWN", FATALITY_LOCATION)) 
+
+places_to_remove <- c(
+  "VIRGIN ISLANDS", "PUERTO RICO", "ST LAWRENCE R", "LAKE ONTARIO",
+  "LAKE ST CLAIR", "LAKE SUPERIOR", "HAWAII WATERS", "LAKE ERIE",
+  "LAKE HURON", "LAKE MICHIGAN", "DISTRICT OF COLUMBIA", "E PACIFIC",
+  "GUAM WATERS", "GULF OF ALASKA", "GULF OF MEXICO", "AMERICAN SAMOA",
+  "ATLANTIC NORTH", "ATLANTIC SOUTH", "GUAM"
+)
+  
+
+# Number of Events by Year and Event Type
+library(dplyr)
+library(ggplot2)
+library (DT)
+
+# Group similar events into broader categories
+D_all <- D_all %>%
+  mutate(EVENT_GROUP = case_when(
+    grepl("Flood|Flash Flood|Coastal Flood|Lakeshore Flood", EVENT_TYPE, ignore.case = TRUE) ~ "Flood",
+    grepl("Wind|Thunderstorm Wind|Strong Wind|High Wind|Marine High Wind|Marine Strong Wind|Tropical Storm", EVENT_TYPE, ignore.case = TRUE) ~ "Wind",
+    grepl("Tornado|Hurricane|Typhoon|Tropical Depression", EVENT_TYPE, ignore.case = TRUE) ~ "Tornado/Hurricane",
+    grepl("Snow|Winter|Blizzard|Sleet|Ice Storm|Freezing Fog", EVENT_TYPE, ignore.case = TRUE) ~ "Winter Weather",
+    grepl("Heat|Excessive Heat|Drought", EVENT_TYPE, ignore.case = TRUE) ~ "Heat/Drought",
+    grepl("Fire|Wildfire", EVENT_TYPE, ignore.case = TRUE) ~ "Fire",
+    grepl("Fog|Dense Fog|Marine Dense Fog", EVENT_TYPE, ignore.case = TRUE) ~ "Fog",
+    grepl("Dust|Debris", EVENT_TYPE, ignore.case = TRUE) ~ "Dust/Smoke",
+    grepl("Tsunami|Seiche|Rip Current|Marine", EVENT_TYPE, ignore.case = TRUE) ~ "Marine/Coastal",
+    TRUE ~ "Other"
+  ))
+
+# Summarize
+events_by_year_group <- D_all %>%
+  group_by(YEAR, EVENT_GROUP) %>%
+  summarise(Event_Count = n()) %>%
+  ungroup()
+
+```
+
+Between 2015 and 2023, Wind events consistently dominated, with a marked peak in 2023, where the total number of events surpasses 150,000 (Fig. 1). Other event types, such as Winter Weather and Tornado/Hurricane were consistent across the period, while categories like Fire and Dust/Smoke contributed minimally. This underscores a significant surge in storm events in 2023 relative to the preceding years. There is no data for 2024.
+
+```{r, error=FALSE, message=FALSE, warning=FALSE}
+
+
+ggplot(events_by_year_group, aes(x = YEAR, y = Event_Count, fill = EVENT_GROUP)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Storm Events by Year and Group (2015-2024)",
+       x = "Year", y = "Number of Events",
+       fill = "Event Group") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 12),
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", size = 14, hjust = 0.5))
+
+
+```
+
+Fig 1. Storm Events by Year and Group (2015-2024).
+
+From 2015 to 2024, the "Unknown" location type had the highest number of fatalities, exceeding 3,000, followed "Vehicle/Towed Trailer" and "Outside/Open Areas," each with approximately 2,000 fatalities (Fig. 2). "In Water" and "Permanent Home" also show significant fatality counts, around 1,500 each, while "Mobile/Trailer Home" and "Boating" report slightly fewer deaths. Locations such as "Telephone," "Ball Field," "School," and "Church" exhibit the lowest fatality counts, each with fewer than 100 deaths. This highlights that storm-related fatalities are most prevalent in unspecified or open-area locations over the decade.
+
+```{r, error=FALSE,message=FALSE, warning=FALSE}
+
+# Summarize fatalities by location
+fatalities_by_location <- F_all %>% 
+  group_by(FATALITY_LOCATION) %>%
+  summarise(Fatality_Count = n()) %>%
+  ungroup()
+
+#  Fatalities by Location Type
+ggplot(fatalities_by_location, aes(x = reorder(FATALITY_LOCATION, -Fatality_Count), y = Fatality_Count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Fatalities by Location Type (2015-2024)",
+       x = "Fatality Location", y = "Number of Fatalities") +
+  theme_minimal() +
+  coord_flip()
+
+```
+
+Fig 2. Fatalities by Location Type.
+
+From 2015 to 2024, the distribution exhibits a right-skewed pattern, with a peak in fatalities occurring between the ages of 50 and 60, where counts reach approximately 450 (Fig. 3). Fatalities are relatively low for individuals under 20 years of age, increase steadily through middle age, and then decline gradually after the age of 60, with very few fatalities recorded beyond 90 years. This suggests that middle-aged and older adults are the most affected demographic in terms of storm-related fatalities over the decade.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+
+ggplot(F_all, aes(x = FATALITY_AGE)) +
+  geom_histogram(binwidth = 5, fill = "purple", color = "black") +
+  labs(title = "Age Distribution of Fatalities (2015-2024)",
+       x = "Age", y = "Count") +
+  theme_minimal()
+```
+
+Fig 3. age distribution of fatalities.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+
+event_type_mapping <- D_all %>%
+  distinct(EVENT_TYPE) %>%
+  mutate(
+    EVENT_GROUP = case_when(
+      grepl("Flood|Flash Flood|Coastal Flood|Lakeshore Flood", EVENT_TYPE, ignore.case = TRUE) ~ "Flood",
+      grepl("Wind|Thunderstorm Wind|Strong Wind|High Wind|Marine High Wind|Marine Strong Wind|Tropical Storm", EVENT_TYPE, ignore.case = TRUE) ~ "Wind",
+      grepl("Tornado|Hurricane|Typhoon|Tropical Depression", EVENT_TYPE, ignore.case = TRUE) ~ "Tornado/Hurricane",
+      grepl("Snow|Winter|Blizzard|Sleet|Ice Storm|Freezing Fog", EVENT_TYPE, ignore.case = TRUE) ~ "Winter Weather",
+      grepl("Heat|Excessive Heat|Drought", EVENT_TYPE, ignore.case = TRUE) ~ "Heat/Drought",
+      grepl("Fire|Wildfire", EVENT_TYPE, ignore.case = TRUE) ~ "Fire",
+      grepl("Fog|Dense Fog|Marine Dense Fog", EVENT_TYPE, ignore.case = TRUE) ~ "Fog",
+      grepl("Dust|Debris", EVENT_TYPE, ignore.case = TRUE) ~ "Dust/Smoke",
+      grepl("Tsunami|Seiche|Rip Current|Marine", EVENT_TYPE, ignore.case = TRUE) ~ "Marine/Coastal",
+      TRUE ~ "Other"
+    )
+  )
+
+
+# Merge event_type_mapping with D_all using left_join
+D_all_with_groups <- D_all %>%
+  left_join(event_type_mapping, by = "EVENT_TYPE")
+
+
+#  Create a function to convert "K", "M", "B" to numeric
+convert_damage <- function(damage_str) {
+  damage_str <- toupper(trimws(damage_str))
+  damage_str <- gsub(",", "", damage_str)  # remove commas
+  
+  value <- as.numeric(gsub("[KMB]", "", damage_str))
+  
+  multiplier <- case_when(
+    grepl("K$", damage_str) ~ 1e3,
+    grepl("M$", damage_str) ~ 1e6,
+    grepl("B$", damage_str) ~ 1e9,
+    TRUE ~ 1
+  )
+  
+  return(value * multiplier)
+}
+```
+
+The table 1 summarizes storm event impacts from 2015 to 2024 by event type, sorted by total deaths. Heat/Drought caused the most deaths (4,205) and injuries (6,411), with damages of \$2.9 million (property) and \$2.2 billion (crops). Wind led in property damage at \$183.5 billion, followed by Tornado/Hurricane at \$79.3 billion. Flood caused 1,130 deaths and \$921.7 billion in property damage, the highest for crops at \$2.7 billion. Winter Weather and Marine/Coastal events had fewer deaths (799 and 684, respectively), while Dust/Smoke had the least (98 deaths, \$904.8 million in property damage).
+
+Table 1. Summary table of injuries, deaths, and damages by event type.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Clean the dataset and summarize
+impact_summary <- D_all_with_groups%>%
+  mutate(
+   
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY),
+    DAMAGE_CROPS_NUM = convert_damage(DAMAGE_CROPS)
+  ) %>%
+  group_by(EVENT_GROUP.x) %>%
+  summarise(
+    Total_Injuries = sum(INJURIES_DIRECT, na.rm = TRUE) + sum(INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Deaths = sum(DEATHS_DIRECT, na.rm = TRUE) + sum(DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Damage_Property = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Damage_Crops = sum(DAMAGE_CROPS_NUM, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  arrange(desc(Total_Deaths))
+
+
+datatable(impact_summary,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",       
+          caption = "Summary of injuries, deaths, and damages by event type",
+          escape = TRUE)
+
+```
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Plot fatalities by year
+F_all <- F_all %>%
+  mutate(Year = as.integer(substr(FAT_YEARMONTH, 1, 4)))
+F_all_filtered <- F_all %>%
+  filter(Year != 9999 & !is.na(Year))%>% filter(!is.na(FATALITY_SEX)) 
+```
+
+The number of fatalities was lowest in 2019 and highest in 2024 due to all weather disasters in United States (Fig. 4).
+
+Fig 4. Total Fatalities by Year due to all events.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+ggplot(F_all_filtered, aes(x = as.factor(Year))) +
+  geom_bar(fill = "tomato") +
+  labs(title = "Fatalities by Year", x = "Year", y = "Count") +
+  theme_minimal()
+```
+
+Fig 4 shows the number of fatalities by age, sex (F = Female, M = Male), and year (2015–2024).More males died in most age groups and years. Fatalities are more common between ages 20 and 70, and the pattern is similar each year.
+
+Fig 5. Fatality Age Distribution by Sex and Year.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Step 1: Extract Year from EVENT_YEARMONTH
+F_all <- F_all %>%
+  mutate(Year = substr(as.character(EVENT_YEARMONTH), 1, 4),
+         FATALITY_AGE = as.numeric(FATALITY_AGE)) 
+F_all_filtered <- F_all %>%
+  filter(Year != 9999 & !is.na(Year)) %>%
+  filter(Year >= 2015 & Year <= 2024 & !is.na(Year)) %>%
+  filter(!is.na(FATALITY_SEX) & FATALITY_SEX != "NA")
+```
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+ggplot(F_all_filtered, aes(x = FATALITY_AGE, fill = FATALITY_SEX)) +
+  geom_histogram(binwidth = 5, position = "dodge", na.rm = TRUE) +
+  facet_wrap(~ Year, scales = "free_y", nrow = 5, ncol = 2) + 
+  labs(title = "Fatality Age Distribution by Sex and Year",
+       x = "Age", y = "Number of Fatalities", fill = "Sex") +
+  theme_minimal()
+```
+
+## **Hurricane**
+
+```{r error=FALSE, message= FALSE , warning=FALSE}
+##Plot the number of hurricanes by year etc.
+library(dplyr)
+library(ggplot2)
+
+# Filter for Hurricane events only
+hurricane_data <- D_all %>%
+  filter(EVENT_TYPE == "Hurricane") %>%
+  mutate(YEAR = as.numeric(YEAR))  # make sure it's numeric
+
+# Count number of hurricanes by year and state
+hurricane_count <- hurricane_data %>%
+  group_by(YEAR, STATE) %>% filter(!STATE %in% places_to_remove) %>%
+  summarise(count = n(), .groups = "drop")
+```
+
+The highest hurricane count occurred in 2020, exceeding 60, with significant contributions from Louisiana and Texas (Fig 6). The lowest was in 2019, with fewer than 10 hurricanes, mostly in North Carolina. Louisiana and Florida consistently experienced the most hurricanes across the years.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+ggplot(hurricane_count, aes(x = YEAR, y = count, fill = STATE)) + 
+  geom_col(position = "stack") +
+  labs(title = "Number of Hurricanes by Year and State",
+       x = "Year", y = "Number of Hurricanes") +
+  theme_minimal()
+```
+
+Fig 6. Number of Hurricanes by Year and State.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Filter hurricane events and clean DAMAGE_PROPERTIS column
+convert_damage <- function(damage_str) {
+  damage_str <- toupper(trimws(damage_str))
+  damage_str <- gsub(",", "", damage_str)  # remove commas
+  
+  value <- as.numeric(gsub("[KMB]", "", damage_str))
+  
+  multiplier <- case_when(
+    grepl("K$", damage_str) ~ 1e3,
+    grepl("M$", damage_str) ~ 1e6,
+    grepl("B$", damage_str) ~ 1e9,
+    TRUE ~ 1
+  )
+  
+  return(value * multiplier)
+}
+
+
+hurricane_damage <- D_all %>%
+  filter(EVENT_TYPE == "Hurricane") %>%
+  mutate(
+    EVENT_YEAR = as.numeric(YEAR),
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY)
+  )
+
+#  Summarize total damage by year
+yearly_damage_Hurricane <- hurricane_damage %>%
+  group_by(EVENT_YEAR) %>%
+  summarise(total_damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE), .groups = "drop")
+```
+
+The highest damages occurred in 2020 and 2022, each exceeding \$15 billion, indicating the severity of hurricanes during those years (Fig. 7). In contrast, 2016 experienced minimal damage, suggesting weaker storms or fewer landfalls. Overall, the data suggested significant year-to-year variation in the financial impact of hurricanes.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+ggplot(yearly_damage_Hurricane, aes(x = EVENT_YEAR, y = total_damage)) +
+  geom_col(fill = "darkblue") +
+  labs(title = "Total Property Damage from Hurricanes by Year",
+       x = "Year", y = "Total Damage ($)") +
+  
+  theme_minimal()
+```
+
+Fig 7. Total Property Damage from Hurricanes by Year.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Table Summary of Hazardous (Hurricane) Weather Fatalities(DEATHS_DIRECT + DEATHS_INDIRECT), 
+#Injuries (INJURIES_DIRECT + INJURIES_INDIRECT) , and Damage Costs(DAMAGE_PROPERTY, DAMAGE_CROP) Listed by State (STATE)
+
+places_to_remove <- c(
+  "VIRGIN ISLANDS", "PUERTO RICO", "ST LAWRENCE R", "LAKE ONTARIO",
+  "LAKE ST CLAIR", "LAKE SUPERIOR", "HAWAII WATERS", "LAKE ERIE",
+  "LAKE HURON", "LAKE MICHIGAN", "DISTRICT OF COLUMBIA", "E PACIFIC",
+  "GUAM WATERS", "GULF OF ALASKA", "GULF OF MEXICO", "AMERICAN SAMOA",
+  "ATLANTIC NORTH", "ATLANTIC SOUTH", "GUAM"
+)
+
+Storms_all <- D_all %>%  filter(!STATE %in% places_to_remove) %>%
+  mutate(
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY),
+    DAMAGE_CROP_NUM = convert_damage(DAMAGE_CROPS)
+  )
+
+
+#Summarize by State
+summary_table_Hurricane <- Storms_all %>%
+  group_by(STATE) %>%
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Arizona had the highest fatalities due to hurricane while Arizona didn’t experience hurricanes directly, their remnants may have caused significant weather impacts. This is primarily through heavy rainfall and flooding during the Pacific hurricane season which often overlaps with Arizona’s monsoon season (Fig. 8). A potential reason for this was Hurricane Lorena in 2019 which hit Arizona especially hard.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Plot Total Fatalities by State
+# Filter out states > 50 fatalities
+summary_filtered <- summary_table_Hurricane %>% 
+  filter(!STATE %in% places_to_remove) %>%
+  filter(Total_Fatalities > 50)
+
+# Plot
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Fatalities), y = Total_Fatalities)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Fatalities by State due to Hurricane",
+       x = "State", y = "Fatalities") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 8. Total Fatalities by State due to Hurricane.
+
+Texas experienced the highest number of injuries due to hurricanes (Fig. 9). This plot was generated after filtering out states with more than 50 fatalities to enhance clarity.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Plot Total Injuries by State
+# Filter out states > 50 fatalities
+summary_filtered <- summary_table_Hurricane %>%
+  filter(!STATE %in% places_to_remove) %>%
+  filter(Total_Injuries > 50)
+
+# Plot
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Injuries), y = Total_Injuries)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Injuries by State due to Hurricane",
+       x = "State", y = "Injuries") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Fig 9. Total Injuries by State due to Hurricane
+
+Texas incurred the highest property damage from hurricanes (Fig. 10). This plot was created after applying a filter (Total_Property_Damage \> \$100000000).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Total Property Damage by State by Hurricane
+summary_filtered <- summary_table_Hurricane %>%
+  filter(!STATE %in% places_to_remove) %>%
+  filter(Total_Property_Damage > 100000000)
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Property_Damage), y = Total_Property_Damage)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Total Property Damage by State due to Hurricane",
+       x = "State", y = "Property Damage ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 10. Total Property Damage by State due to Hurricane
+
+Georgia, Florida, and South Dakota had the highest crop damage from hurricanes (Fig. 11).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Total crop damage by state (Hurricane)
+summary_filtered <- summary_table_Hurricane%>%
+  filter(!STATE %in% places_to_remove) %>%
+  filter(Total_Crop_Damage > 10000000)
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Crop_Damage), y = Total_Crop_Damage)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Total Crop Damage by State due to Hurricane",
+       x = "State", y = "Crop Damage ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 11. Total Crop Damage by State due to Hurricane.
+
+## **Heavy Snow**
+
+The highest damage occurred in 2017, reaching approximately \$2.0 billion due to Heavy Snow in United States (Fig. 13).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+Snow_damage <- D_all %>%
+  filter(EVENT_TYPE == "Heavy Snow") %>%
+  mutate(
+    EVENT_YEAR = as.numeric(YEAR),
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY)
+  )
+
+
+
+yearly_damage_Snow <- Snow_damage %>%
+  group_by(EVENT_YEAR) %>%
+  summarise(total_damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE), .groups = "drop")
+
+
+ggplot(yearly_damage_Snow, aes(x = EVENT_YEAR, y = total_damage)) +
+  geom_col(fill = "darkblue") +
+  labs(title = "Total Property Damage from Heavy Snow by Year",
+       x = "Year", y = "Total Damage ($)") +
+  
+  theme_minimal()
+```
+
+Fig 12. Total Property Damage from Heavy Snow by Year.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+Snow_damage <- Snow_damage %>%
+  mutate(
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY),
+    DAMAGE_CROP_NUM = convert_damage(DAMAGE_CROPS)
+  )
+
+# Summary table for heavy snow data
+#Summarize by State
+summary_table_snow <- Snow_damage %>% filter(!STATE %in% places_to_remove) %>%
+  group_by(STATE) %>%
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Minnesota, Washington and California has highest fatalities in 10 years due to heavy snow event (Fig. 12).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Filter out states > 0 fatalities
+summary_filtered <- summary_table_snow %>%
+  filter(!STATE %in% places_to_remove) %>%
+  filter(Total_Fatalities > 0)
+
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Fatalities), y = Total_Fatalities)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Fatalities by State from Heavy Snow",
+       x = "State", y = "Fatalities") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Figure 12. Total Fatalities by State from Heavy Snow.
+
+New Mexico, Arizona, and Indiana Has more injuries event in 10 years due to Heavy Snow(Fig. 13).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Filter out states > 0 Injury
+summary_filtered <- summary_table_snow %>%
+   filter(!STATE %in% places_to_remove) %>%
+  filter(Total_Injuries > 0)
+
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Injuries), y = Total_Injuries)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Injuries by State from Heavy Snow",
+       x = "State", y = "Injuries") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Figure 13. Total Injuries by State from Heavy Snow
+
+Oregon, Idaho had more property damage due to Heavy Snow in 10 years (Fig. 14)
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Total Property Damage by State by Heavy Snow
+summary_filtered <- summary_table_snow %>%
+  
+  filter(Total_Property_Damage > 1000000)
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Property_Damage), y = Total_Property_Damage)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Total Property Damage by State from Heavy Snow",
+       x = "State", y = "Property Damage ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Figure 14. Total Property Damage by State from Heavy Snow.
+
+Only two states has crop damage data in 10 years (Fig. 15).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Total crop damage by state from Heavy snow
+summary_filtered_snow <- summary_table_snow %>%
+  filter(Total_Crop_Damage > 0)
+
+ggplot(summary_filtered_snow, aes(x = reorder(STATE, Total_Crop_Damage), y = Total_Crop_Damage)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Total Crop Damage by State from Heavy Snow",
+       x = "State", y = "Crop Damage ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Fig 15. Total Crop Damage by State from Heavy Snow.
+
+## **Tornado**
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# summary table for Tornado from 2015 to 2024
+Tornado_damage <- D_all %>%
+  filter(EVENT_TYPE == "Tornado") %>%
+  mutate(
+    EVENT_YEAR = as.numeric(YEAR),
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY)
+  )
+
+Tornado_damage <- Tornado_damage %>%
+  mutate(
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY),
+    DAMAGE_CROP_NUM = convert_damage(DAMAGE_CROPS)
+  )
+
+#Summarize by State
+summary_table_Tornado <- Tornado_damage %>%
+  filter(!STATE %in% places_to_remove) %>%
+  group_by(STATE) %>% 
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+```
+
+Mississippi, Kentucky, and Tennessee has highest fatalities happen due to Tornado in 10 years (Fig. 16).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Plot Total Fatalities by State for Tornado 
+# Filter out states > 0 fatalities
+summary_filtered <- summary_table_Tornado %>%
+  filter(Total_Fatalities > 0)
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Fatalities), y = Total_Fatalities)) +
+  geom_col(fill = "pink") +
+  labs(title = "Total Fatalities by State (Tornado)",
+       x = "State", y = "Fatalities") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Fig 16. Total Fatalities by State (Tornado).
+
+Texas, Mississippi and Tennessee had the highest injuries due to Tornado in 10 years (Fig. 17).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Plot Total Injuries by State by Tornado
+# Filter out states > 5 injuries
+summary_filtered <- summary_table_Tornado %>%
+  filter(Total_Injuries > 5)
+
+# Plot
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Injuries), y = Total_Injuries)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Injuries by State (Tornado)",
+       x = "State", y = "Injuries") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 17. Total Injuries by State (Tornado).
+
+Texas, Tennessee and Arkansas has highest property damage due to tornado (Fig. 18).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Total Property Damage by State by Tornado
+summary_filtered <- summary_table_Tornado %>%
+  filter(Total_Property_Damage > 10000000)
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Property_Damage), y = Total_Property_Damage)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Total Property Damage by State (Tornado)",
+       x = "State", y = "Property Damage ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 18. Total Property Damage by State (Tornado)
+
+Mississippi had highest crop damage due to Tornado comparing to other states (Fig. 19).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Total crop damage by state (Tornado)
+summary_filtered <- summary_table_Tornado %>%
+  filter(Total_Crop_Damage > 100000)
+
+ggplot(summary_filtered, aes(x = reorder(STATE, Total_Crop_Damage), y = Total_Crop_Damage)) +
+  geom_col(fill = "lightblue") +
+  labs(title = "Total Crop Damage by State (Tornado)",
+       x = "State", y = "Crop Damage ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Fig 19. Total Crop Damage by State (Tornado)
+
+In 2020, tornadoes caused the most crop damage in the last 10 years (Fig. 20), while 2018 had the least crop damage during that time.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+yearly_damage_Tornado <- Tornado_damage %>%
+  group_by(EVENT_YEAR) %>%
+  summarise(total_damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Plot the result
+ggplot(yearly_damage_Tornado, aes(x = EVENT_YEAR, y = total_damage)) +
+  geom_col(fill = "darkblue") +
+  labs(title = "Total Crop Damage from Tornado by Year",
+       x = "Year", y = "Total Damage ($)") +
+  
+  theme_minimal()
+```
+
+Fig 20. Total Crop Damage from Tornado by Year
+
+In 2019, tornadoes caused the most property damage in the last 10 years (Fig. 21), while 2016 had the least property damage during that time.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+yearly_damage_Tornado <- Tornado_damage %>%
+  group_by(EVENT_YEAR) %>%
+  summarise(total_damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Plot the result
+ggplot(yearly_damage_Tornado, aes(x = EVENT_YEAR, y = total_damage)) +
+  geom_col(fill = "darkblue") +
+  labs(title = "Total Property Damage from Tornado by Year",
+       x = "Year", y = "Total Damage ($)") +
+  
+  theme_minimal()
+```
+
+Fig 21. Total Property Damage from Tornado by Year
+
+## Risk Adjustment by Population
+
+Odds of death and injury normalized by state population.
+
+-   Most deadly states for hazardous weather: Arizona, Nevada, Hawaii, South Dakota, and Wyoming.
+
+-   Least deadly states for hazardous weather: Massachusetts, Connecticut, D.C., Delaware, and Ohio.
+
+-   Most Injurious states for hazardous weather: Wyoming, Mississippi, Oklahoma, Missouri, and Arkansas.
+
+-   Least Injurious states for hazardous weather: Connecticut, New York, Massachusetts, Rhode Island, and Vermont.
+
+One primary issue of using absolute numbers is that states with high populations and size may heavily skew the absolute numbers. Upon looking at the initial results, large states with high populations like Texas, Florida, and California were at the top. In order to solve this problem, we can adjust each state by population. We took the United States Census Bureau’s 2020 state populations to get a median population for each state from 2015-2024 assuming no major growth or shrinkage. Given these numbers, we then got the total injuries and fatalities by each state, and divided by population size. This gave us the risk ratio. To ensure the average person could comprehend the total odds and to rank states by safety, we calculated the odds ratios in the format (odds of injury/fatality in each state are *x to 1*).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+library(DBI)
+library(RSQLite)
+library(readxl)
+library(ggplot2)
+
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+#accesses the noaa_data database 
+res <- dbSendQuery(con, "
+SELECT STATE, SUM(DEATHS_DIRECT + DEATHS_INDIRECT) AS totalDeaths, SUM(INJURIES_DIRECT + INJURIES_INDIRECT ) AS totalInjuries
+FROM DETAILS GROUP BY STATE ORDER BY STATE
+")
+stateData <- dbFetch(res)
+
+dbClearResult(res)
+dbDisconnect(con)
+
+
+statePop <- read_excel("2020_State_Populations.xlsx")
+
+
+#in the NOAA state column, there are also territories and nautical injuries/deaths
+#this ensures we only look at the 50 states and D.C
+#may incidentally exclude injuries that are off the coast of states like Alaska or Michigan
+unusedStates <- unique(stateData$STATE[!stateData$STATE %in% statePop$STATE])
+
+stateData <- stateData[stateData$STATE %in% statePop$STATE,]
+
+#adds new columns to the statePop data frame
+statePop$totalDeaths <- 0
+statePop$totalInjuries <- 0
+
+
+for(i in 1:nrow(statePop)){
+  stateName <- statePop$STATE[i]
+  matchRow <- stateData[stateData$STATE == stateName,]
+  if(nrow(matchRow) > 0){
+    statePop$totalDeaths[i] <- matchRow$totalDeaths
+    statePop$totalInjuries[i] <- matchRow$totalInjuries
+  }
+}
+#calculates the rate of injury/death in the total state population in 2020 due to recorded
+#weather disasters in the NOAA database
+statePop$deathRatio <- statePop$totalDeaths/statePop$POPULATION
+statePop$injuryRatio <- statePop$totalInjuries/statePop$POPULATION
+
+
+
+
+#calculates an odds ratio using the formula p/(1-p) = odds ratio
+#then we look at the odds using 1:x where x is 1/odds
+for(i in 1:nrow(statePop)){
+  #ensures there a valid ratio that isn't 0
+  #saves in the statePop table the raw odds number, then in the 1:x odds format
+  if(statePop$deathRatio[i] > 0 && statePop$deathRatio[i]<1){
+    statePop$deathOddsNum[i] <- statePop$deathRatio[i]/(1-statePop$deathRatio[i])
+    statePop$deathOdds[i] <- paste0("1:", round(1/statePop$deathOddsNum[i]))
+  }
+  else{
+    #if no one died in this state, there is no odds ratio
+    statePop$deathOdds[i] <- "None"
+  }
+  #repeat for injury
+  if(statePop$injuryRatio[i] > 0 && statePop$injuryRatio[i]<1){
+    statePop$injuryOddsNum[i] <- statePop$injuryRatio[i]/(1-statePop$injuryRatio[i])
+    statePop$injuryOdds[i] <- paste0("1:", round(1/statePop$injuryOddsNum[i]))
+  }
+  else{
+    statePop$injuryOdds[i] <- "None"
+  }
+   
+}
+#If we want the top and bottom 5 for odds of death or injury
+top5DeathState <- statePop[order(statePop$deathOddsNum), ][1:5, ]
+bottom5DeathState <- statePop[order(statePop$deathOddsNum, decreasing=TRUE), ][1:5, ]
+top5InjuryState <- statePop[order(statePop$injuryOddsNum), ][1:5, ]
+bottom5InjuryState <- statePop[order(statePop$injuryOddsNum, decreasing=TRUE), ][1:5, ]
+
+
+
+
+
+# combines the top and bottom 5 into one variable to make graphing easier
+combinedDeathState <- statePop[which(statePop$STATE %in% c(top5DeathState$STATE,
+  bottom5DeathState$STATE)), ]
+combinedInjuryState <- statePop[which(statePop$STATE %in% c(top5InjuryState$STATE,
+  bottom5InjuryState$STATE)), ]
+
+#Graphs the population adjusted odds of death from the top and bottom 5 states, ordering the y axis so smaller odds are at the bottom (meaning there is a larger x in the formula 1:x)
+ggplot(combinedDeathState, aes(x = reorder(STATE, deathOddsNum), y = deathOddsNum)) +
+  geom_col(fill = "firebrick") +
+  #https://ggplot2.tidyverse.org/reference/geom_text.html
+  geom_text(aes(label = paste0(round(1/deathOddsNum), ":1")),
+    #The y axis has to be expanded a bit to allow for the odds to be shown at the 
+    #top of each bar
+    vjust = -0.5, size = 3.5) +
+  scale_y_continuous(labels = function(x) round(1/x), expand = expansion(mult = c(0, 0.1))) +
+  labs(title ="Top 5 and Bottom 5 States by Odds of Severe Weather Related Deaths",
+       x = "State", y = "Odds (x to 1)") +theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+Fig 22. Top and Bottom 5 Most Deadly States for Severe Weather Events Adjusted by Population
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#repeat for injury to get population adjusted odds of injury for the top and bottom states
+ggplot(combinedInjuryState, aes(x = reorder(STATE, injuryOddsNum), y = injuryOddsNum)) +
+  geom_col(fill = "firebrick") +
+  geom_text(aes(label = paste0(round(1/injuryOddsNum), ":1")),
+    vjust = -0.5, size = 3.5) +
+  scale_y_continuous(labels = function(x) round(1/x), expand = expansion(mult = c(0, 0.1))) +
+  labs(title="Top 5 and Bottom 5 States by Odds of Severe Weather Related Injuries",
+       x = "State", y= "Odds (x to 1)") +theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 23. Top and Bottom 5 Most Injurious States for Severe Weather Events Adjusted by Population
+
+Overall Conclusions: There certainly is a difference in injury and fatality risk by state even when adjusting for population size. Wyoming is among the highest in odds of death and injury for severe weather, a fact that would have never been seen when looking at the absolute numbers. Even small states like Connecticut when adjusted for population size showed that generally, the Northeastern states are far more safe from hazardous weather.
+
+## **Northeastern U.S. states**
+
+Between 2015 and 2024, storm events in Northeast states caused the following impacts: New York had the highest fatalities at 146 and the most property damage at 876,462,000, while Rhode Island recorded the lowest fatalities at 7 and the least property damage at \$7,109,400. Pennsylvania saw the most injuries at 472, with Vermont having the fewest at 8. New Hampshire experienced the highest crop damage at \$61,500,000.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Define Northeastern U.S. states
+northeast_states <- c(
+  "MAINE", "NEW HAMPSHIRE", "VERMONT", "MASSACHUSETTS",
+  "RHODE ISLAND", "CONNECTICUT", "NEW YORK", "NEW JERSEY", "PENNSYLVANIA"
+)
+
+# Summarize by STATE for Northeast only
+northeast_summary <- Storms_all %>%
+  # Filter only northeast region states
+  filter(STATE %in% northeast_states) %>%
+  
+  # Group by STATE 
+  group_by(STATE) %>%
+  
+  # Summarize impacts
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Table 2. Summarize by STATE for Northeast only
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# View the result
+datatable(northeast_summary,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",       
+          caption = "Summarize by STATE for Northeast only",
+          escape = TRUE)
+
+```
+
+New York and Pennsylvania experienced the highest property damage and fatalities from weather events over the past decade (Fig. 25). Vermont and New Jersey saw the most injuries, while Maine and New Hampshire incurred the highest crop damage. This shows that different states were affected in different ways by bad weather.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Side-by-Side Plot: Property vs Crop Damage
+library(tidyr)
+
+damage_long <- northeast_summary %>%
+  select(STATE, Total_Property_Damage, Total_Crop_Damage) %>%
+  pivot_longer(cols = starts_with("Total_"), names_to = "Damage_Type", values_to = "Damage_Value") 
+
+
+#Faceted View: All Four Metrics by State
+summary_long <- northeast_summary %>%
+  pivot_longer(cols = starts_with("Total_"), names_to = "Metric", values_to = "Value")
+
+ggplot(summary_long, aes(x = reorder(STATE, -Value), y = Value, fill = Metric)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = "Weather Impact Summary by Metric for Northeast States",
+       x = "State", y = "Value") +
+  scale_y_continuous(labels = scales::comma_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 24. Weather Impact Summary by Metric for Northeast States
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Summarize by STATE and EVENT_TYPE for Northeast only
+northeast_summary_Event <- Storms_all %>%
+  # Filter only northeast region states
+  filter(STATE %in% northeast_states) %>%
+  
+  # Group by STATE and EVENT_TYPE
+  group_by(STATE, EVENT_TYPE) %>%
+  
+  # Summarize impacts
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+When adjusting for population, While New York and Pennsylvania dominate the absolute numbers, the odds of weather related risk in each state become far clearer.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#If we want to look at only Northeastern states, just repeat the previous analysis
+
+
+northeastStates <- c(
+  "MAINE", "NEW HAMPSHIRE", "VERMONT", "MASSACHUSETTS",
+  "RHODE ISLAND", "CONNECTICUT", "NEW YORK", "NEW JERSEY", "PENNSYLVANIA"
+)
+#Groups together all of the northeastern states in one variable
+northeastStateData <- statePop[statePop$STATE %in% northeastStates, ]
+
+ggplot(northeastStateData, aes(x = reorder(STATE, deathOddsNum), y = deathOddsNum)) +
+  geom_col(fill="firebrick") +
+  geom_text(aes(label = paste0(round(1/deathOddsNum), ":1")),
+    vjust = -0.5, size = 3.5) +
+  scale_y_continuous(labels = function(x) round(1/x), expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Odds of Severe Weather Related Death in the Northeast States",x = "State", 
+       y = "Odds (x to 1)") + theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 25. Odds of Severe Weather Related Death in the Northeast States
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+
+ggplot(northeastStateData, aes(x = reorder(STATE, injuryOddsNum), y = injuryOddsNum)) +
+  geom_col(fill="firebrick") +
+  geom_text(aes(label = paste0(round(1/injuryOddsNum), ":1")),
+    vjust = -0.5, size = 3.5) +
+  scale_y_continuous(labels = function(x) round(1/x), expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Odds of Severe Weather Related Injury in the Northeast States",x = "State", 
+       y = "Odds (x to 1)") + theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 26. Odds of Severe Weather Related Injury in the Northeast States
+
+Overall we see that:
+
+-   Vermont has far higher fatality risk than other Northeast states.
+
+-   Maine, New Hampshire, Pennsylvania, and New Jersey have higher injury rates.
+
+-   Total property damage dominated by New York and Pennsylvania due to size.
+
+-   Crop damage had very limited reporting, but weather impact in New Hampshire was by far the highest.
+
+## Most Frequent Events
+
+For each month, which event is the most common when adjusting for storm episodes and not events reported?
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+library(DBI)
+library(RSQLite)
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(DT)
+
+#accesses the noaa_data database 
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+
+#COMBINED SQL R ANALYSIS
+#The SQL query became so convoluted, moving the analysis to R was simpler
+
+#queries for the event type for each month
+res <- dbSendQuery(con, "
+SELECT MONTH_NAME, EVENT_TYPE, COUNT(DISTINCT EPISODE_ID) AS eventCount
+FROM DETAILS
+GROUP BY MONTH_NAME, EVENT_TYPE
+ORDER BY MONTH_NAME, EVENT_TYPE;
+  )
+)
+ORDER BY D.MONTH_NAME;
+")
+#stores a table with the count of each event type for each month
+monthEvents <- dbFetch(res)
+
+dbClearResult(res)
+dbDisconnect(con)
+
+#This R code selects the most common event from each month and puts it in a table
+#unique(monthEvents$MONTH_NAME)
+#stores the maximum for each month
+maxCounts <- tapply(monthEvents$eventCount, monthEvents$MONTH_NAME, max)
+#finds the event that corresponds with that maximum
+topEvents <- monthEvents[monthEvents$eventCount == maxCounts[monthEvents$MONTH_NAME], ]
+#orders by month
+topEvents$MONTH_NAME <- factor(topEvents$MONTH_NAME,
+  levels = c("January", "February", "March", "April", "May", "June", 
+             "July", "August", "September", "October", "November", "December"),
+  ordered = TRUE)
+topEvents <- topEvents[order(topEvents$MONTH_NAME), ]
+ 
+datatable(topEvents,
+          options = list(pageLength = 12),
+          class = "display",
+          filter = "top",
+          caption = "Most Common Weather Event Type per Month (Based on Distinct Episode Count)",
+          escape = TRUE)
+
+```
+
+Table 3. Most Common Weather Event Type per Month
+
+What about the most common in the Northeast?
+
+We can see that the Northeast had:
+
+-   One more month of winter weather (March).
+
+-   One less month of thunderstorms (October).
+
+-   More months of high winds compared to other regions.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+library(DBI)
+library(RSQLite)
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(DT)
+
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+#Similar analysis for only Northeastern states
+
+#queries for the event type for each month
+res <- dbSendQuery(con, "
+SELECT MONTH_NAME, EVENT_TYPE, COUNT(DISTINCT EPISODE_ID) AS eventCount
+FROM DETAILS
+WHERE STATE IN ('MAINE', 'NEW HAMPSHIRE', 'VERMONT', 'MASSACHUSETTS', 
+                 'RHODE ISLAND', 'CONNECTICUT', 'NEW YORK', 'NEW JERSEY', 'PENNSYLVANIA')
+GROUP BY MONTH_NAME, EVENT_TYPE
+ORDER BY MONTH_NAME, EVENT_TYPE;
+  )
+)
+ORDER BY D.MONTH_NAME;
+")
+#stores a table with the count of each event type for each month
+monthEvents <- dbFetch(res)
+
+dbClearResult(res)
+dbDisconnect(con)
+
+#This R code selects the most common event from each month and puts it in a table
+#unique(monthEvents$MONTH_NAME)
+#stores the maximum for each month
+maxCounts <- tapply(monthEvents$eventCount, monthEvents$MONTH_NAME, max)
+#finds the event that corresponds with that maximum
+topEvents <- monthEvents[monthEvents$eventCount == maxCounts[monthEvents$MONTH_NAME], ]
+#orders by month
+topEvents$MONTH_NAME <- factor(topEvents$MONTH_NAME,
+  levels = c("January", "February", "March", "April", "May", "June", 
+             "July", "August", "September", "October", "November", "December"),
+  ordered = TRUE)
+topEvents <- topEvents[order(topEvents$MONTH_NAME), ]
+
+
+datatable(topEvents,
+          options = list(pageLength = 12),
+          class = "display",
+          filter = "top",
+          caption = "Most Common Northeastern Weather Event Type per Month (Based on Distinct Episode Count)",
+          escape = TRUE)
+
+#From this we can see the northeastern states have one more month of 
+#common winter weather in March, and one less month of thunderstorms in October
+#with the Northeast favoring strong winds
+```
+
+Table 4. Most Common Weather Event Type per Month in the Northeast
+
+## Most Hazardous Events
+
+When looking at fatality rate, which events appear to be the most dangerous?
+
+-   The most deadly events were excessive heat, flash floods, rip currents, and tornadoes.
+
+-   Heat-related deaths were by far the most common, with totals in the 9 year observed period reaching 6x the total from the second highest entry, flash flood. 
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+library(DBI)
+library(RSQLite)
+library(readxl)
+library(ggplot2)
+library(dplyr)
+
+#accesses the noaa_data database 
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+
+#queries the total fatalities for each event type
+res <- dbSendQuery(con, "
+SELECT DETAILS.EVENT_TYPE, COUNT(FATALITY.FATALITY_ID) AS fatalityCount FROM DETAILS
+JOIN FATALITY ON DETAILS.EVENT_ID = FATALITY.EVENT_ID
+GROUP BY DETAILS.EVENT_TYPE ORDER BY fatalityCount DESC;
+")
+#stores results in a table
+eventFatality <- dbFetch(res)
+
+dbClearResult(res)
+dbDisconnect(con)
+
+#first, select the top 10 event types by fatalities
+top10EventFatalities <- eventFatality[1:10, ]
+#Now graph those ordered by fatality
+ggplot(top10EventFatalities, aes(x = reorder(EVENT_TYPE, fatalityCount), y = fatalityCount)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Fatalities by Event Type",
+       x = "Event Type", y = "Fatalities") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 27. Total Fatalities by Event Type
+
+## Conclusion
+
+This analysis of NOAA weather data from 2015–2024 used R, SQL, and data visualization tools to explore patterns in event frequency, fatalities, injuries, and damages. Results showed that weather-related harm is unevenly distributed across regions, with notable differences in risk once adjusted for population size. Fatalities were more common among men and showed increasing risk in ages 20 and 60-75, while injury and death locations were often outdoors or in vehicles. Event frequency remained generally stable over time with notable spikes for hurricanes, tornadoes, and heavy snow during certain years. Overall, the analysis highlights the importance of context in understanding the true impact of hazardous weather across the United States.
+
+# Appendix
+
+## Database Design
+
+The Sqlite3 database created to store and query the NOAA provided data contains all information from the Details, Fatality, and Location CSV files provided on their website from 2015-2024. Each category and year came in its own CSV file, and this needed to be combined into a singular entity. In order for the R script to compile, it was necessary to include every category mentioned in the CSV files inside the database. The full database design is listed below:
+
+```{r error=FALSE, message= FALSE, warning=FALSE, eval=FALSE}
+
+```
+
+### Populating the Database
+
+To populate the newly created database after it was created using Sqlite3 from a Linux terminal, R was necessary to import everything in an efficient manner. The database called noaa_data_copy.db was moved manually from the Linux server into a folder containing all relevant NOAA CSV files. R code was then utilized with the dbConnect(SQLite(), dbname = "noaa_data_copy.db") function. Upon creating a method that ensures the code doesn’t break when it found there was missing location data CSV files for certain years with safeReadCsv, using a loop to import all CSV data was simple. The dbWriteTable() function inside the loop that accesses fatality, location, and details CSV files for each year allowed easy importation from CSV to SQL.
+
+SQL Database Design in code chunk below:
+
+```{r error=FALSE, message= FALSE, warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS [DETAILS] (
+  [DETAILS_ID] INTEGER PRIMARY KEY AUTOINCREMENT,
+  [BEGIN_YEARMONTH] DATETIME,
+  [BEGIN_DAY] DATETIME,
+  [BEGIN_TIME] DATETIME,
+  [END_YEARMONTH] DATETIME,
+  [END_DAY] DATETIME,
+  [END_TIME] DATETIME,
+  [EPISODE_ID] INTEGER,
+  [EVENT_ID] INTEGER NOT NULL,
+  [STATE] TEXT,
+  [STATE_FIPS] TEXT,
+  [YEAR] INTEGER,
+  [MONTH_NAME] TEXT,
+  [EVENT_TYPE] TEXT,
+  [CZ_TYPE] TEXT,
+  [CZ_FIPS] INTEGER,
+  [CZ_NAME] TEXT,
+  [WFO] TEXT,
+  [BEGIN_DATE_TIME] DATETIME,
+  [CZ_TIMEZONE] TEXT,
+  [END_DATE_TIME] DATETIME,
+  [INJURIES_DIRECT] INTEGER,
+  [INJURIES_INDIRECT] INTEGER,
+  [DEATHS_DIRECT] INTEGER,
+  [DEATHS_INDIRECT] INTEGER,
+  [DAMAGE_PROPERTY] TEXT,
+  [DAMAGE_CROPS] TEXT,
+  [SOURCE] TEXT,
+  [MAGNITUDE] REAL,
+  [MAGNITUDE_TYPE] INTEGER,
+  [FLOOD_CAUSE] TEXT,
+  [CATEGORY] TEXT,
+  [TOR_F_SCALE] TEXT,
+  [TOR_LENGTH] REAL,
+  [TOR_WIDTH] INTEGER,
+  [TOR_OTHER_WFO] TEXT,
+  [TOR_OTHER_CZ_STATE] TEXT,
+  [TOR_OTHER_CZ_FIPS] INTEGER,
+  [TOR_OTHER_CZ_NAME] TEXT,
+  [BEGIN_RANGE] INTEGER,
+  [BEGIN_AZIMUTH] TEXT,
+  [BEGIN_LOCATION] TEXT,
+  [END_RANGE] INTEGER,
+  [END_AZIMUTH] TEXT,
+  [END_LOCATION] TEXT,
+  [BEGIN_LAT] REAL,
+  [BEGIN_LON] REAL,
+  [END_LAT] REAL,
+  [END_LON] REAL,
+  [EPISODE_NARRATIVE] TEXT,
+  [EVENT_NARRATIVE] TEXT,
+  [DATA_SOURCE] TEXT
+);
+
+CREATE TABLE IF NOT EXISTS [LOCATIONS] (
+  [LOCATION_ID] INTEGER PRIMARY KEY AUTOINCREMENT,
+  [YEARMONTH] INTEGER,
+  [EPISODE_ID] INTEGER NOT NULL,
+  [LOCATION_INDEX] INTEGER,
+  [EVENT_ID] INTEGER NOT NULL,
+  [RANGE] REAL,
+  [AZIMUTH] TEXT,
+  [LOCATION] TEXT,
+  [LATITUDE] REAL,
+  [LONGITUDE] REAL,
+  [LAT2] INTEGER,
+  [LON2] INTEGER,
+  FOREIGN KEY ([EVENT_ID]) REFERENCES [DETAILS]([EVENT_ID])
+);
+
+CREATE TABLE IF NOT EXISTS [FATALITY] (
+  [FAT_YEARMONTH] INTEGER,
+  [FAT_DAY] INTEGER,
+  [FAT_TIME] INTEGER,
+  [FATALITY_ID] INTEGER PRIMARY KEY NOT NULL,
+  [EVENT_ID] INTEGER NOT NULL,
+  [FATALITY_TYPE] TEXT,
+  [FATALITY_DATE] DATETIME,
+  [FATALITY_AGE] INTEGER,
+  [FATALITY_SEX] TEXT,
+  [FATALITY_LOCATION] TEXT,
+  [EVENT_YEARMONTH] INTEGER,
+  FOREIGN KEY ([EVENT_ID]) REFERENCES [DETAILS]([EVENT_ID])
+);
+
+```
+
+Data importation:
+
+```{r error=FALSE, message= FALSE, warning=FALSE, eval=FALSE}
+#This code can only be run once. Any more times and the database will be populated with duplicates.
+library(DBI)
+library(RSQLite)
+library(readr)
+library(dplyr)
+
+#UNCOMMENT THE TOP LINE TO RUN THE CODE. DO NOT RUN TWICE
+#connects to the database, and begins to read the data
+#con <- dbConnect(SQLite(), dbname = "noaa_data_copy.db")
+safeReadCsv <- function(fileName){
+  
+  #protection against when some of the location data years are not available
+  if(file.exists(fileName)){
+    read_csv(fileName, show_col_types = FALSE)
+  }else{
+
+    message(paste("File can't be found:", fileName))
+    return(NULL)
+  }
+}
+
+#Populates the database using a loop that selects CSV files by year.
+#Used the paste0 function to simplify the process of selecting csv files while trying something new.
+years <- 2015:2024
+for (year in years){
+  detailsFile <- paste0("StormEvents_details_", year, ".csv")
+  fatalityFile <- paste0("StormEvents_fatalities_", year, ".csv")
+  locationFile <- paste0("StormEvents_locations_", year, ".csv")
+ detailsData <- safeReadCsv(detailsFile)
+  fatalityData <- safeReadCsv(fatalityFile)
+  locationData <- safeReadCsv(locationFile)
+  #displays discrepancies in format indicating mishandled data
+  problems(locationData)
+  problems(detailsData)
+
+  #prints a small message in case one of the years has a missing file.
+  if (!is.null(detailsData)){
+    dbWriteTable(con, "Details", detailsData, append = TRUE)
+  }
+  if (!is.null(fatalityData)){
+    dbWriteTable(con, "Fatality", fatalityData, append = TRUE)
+  }
+  if (!is.null(locationData)){
+    dbWriteTable(con, "Locations", locationData, append = TRUE)
+  }
+  message(paste("Finished inserting for year:" ,year))
+}
+```
+
+Once the data was inside the SQL database, the data could be queried to solve select problems, but creating graphs and simplifying the analysis suggested there should also be a copy of the data in an R dataframe. Moving the 3 database tables (details to D_all, fatalities to F_all, and locations to L_all) by SELECT \* FROM \[table\] allows us to create data frames that can be easily accessed in R without the SQL importation.
+
+```{r error=FALSE, message= FALSE, warning=FALSE, eval=FALSE}
+#Creates a data frame from the SQL database noaa_data_copy for 
+#the location data
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+res <- dbSendQuery(con, "SELECT * FROM LOCATIONS")
+L_all <- dbFetch(res)
+dbClearResult(res)
+
+#Creates a data frame from the SQL database noaa_data_copy for 
+#the fatality data
+res <- dbSendQuery(con, "SELECT * FROM FATALITY")
+F_all <- dbFetch(res)
+dbClearResult(res)
+
+#Creates a data frame from the SQL database noaa_data_copy for 
+#the details data
+res <- dbSendQuery(con, "SELECT * FROM DETAILS")
+D_all <- dbFetch(res)
+dbClearResult(res)
+dbDisconnect(con)
+```
+
+### Data Review
+
+In order to get a clearer picture of the data from all 3 tables (DETAILS, , the first 3 entries for each variable are displayed.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+library(DBI)
+library(RSQLite)
+library(DT)
+
+
+
+con <- dbConnect(RSQLite::SQLite(), "noaa_data_copy.db")
+
+# --- DETAILS TABLE ---
+res <- dbSendQuery(con, "
+SELECT 
+  DETAILS_ID, BEGIN_YEARMONTH, BEGIN_DAY, BEGIN_TIME, END_YEARMONTH, END_DAY, END_TIME,
+  EPISODE_ID, EVENT_ID, STATE, STATE_FIPS, YEAR, MONTH_NAME, EVENT_TYPE,
+  CZ_TYPE, CZ_FIPS, CZ_NAME, WFO, BEGIN_DATE_TIME, CZ_TIMEZONE, END_DATE_TIME,
+  INJURIES_DIRECT, INJURIES_INDIRECT, DEATHS_DIRECT, DEATHS_INDIRECT,
+  DAMAGE_PROPERTY, DAMAGE_CROPS, SOURCE, MAGNITUDE, MAGNITUDE_TYPE,
+  FLOOD_CAUSE, CATEGORY, TOR_F_SCALE, TOR_LENGTH, TOR_WIDTH,
+  TOR_OTHER_WFO, TOR_OTHER_CZ_STATE, TOR_OTHER_CZ_FIPS, TOR_OTHER_CZ_NAME,
+  BEGIN_RANGE, BEGIN_AZIMUTH, BEGIN_LOCATION, END_RANGE, END_AZIMUTH, END_LOCATION,
+  BEGIN_LAT, BEGIN_LON, END_LAT, END_LON,
+  EPISODE_NARRATIVE, EVENT_NARRATIVE, DATA_SOURCE
+FROM DETAILS
+LIMIT 3;
+")
+df1 <- dbFetch(res)
+dbClearResult(res)
+
+datatable(
+  df1[, !names(df1) %in% c("EPISODE_NARRATIVE", "EVENT_NARRATIVE", "DATA_SOURCE")],
+  options = list(pageLength = 10),
+  class = "display",
+  filter = "top",
+  caption = "First 3 entries from DETAILS table (without long narrative fields)",
+  escape = TRUE
+)
+
+# --- LOCATIONS TABLE ---
+res <- dbSendQuery(con, "
+SELECT 
+  YEARMONTH, EPISODE_ID, LOCATION_INDEX, EVENT_ID,
+  RANGE, AZIMUTH, LOCATION, LATITUDE, LONGITUDE, LAT2, LON2
+FROM LOCATIONS
+LIMIT 3;
+")
+df2 <- dbFetch(res)
+dbClearResult(res)
+
+datatable(df2,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",
+          caption = "First 3 entries from LOCATIONS table",
+          escape = TRUE)
+
+# --- FATALITY TABLE ---
+res <- dbSendQuery(con, "
+SELECT 
+  FAT_YEARMONTH, FAT_DAY, FAT_TIME, FATALITY_ID, EVENT_ID,
+  FATALITY_TYPE, FATALITY_DATE, FATALITY_AGE, FATALITY_SEX,
+  FATALITY_LOCATION, EVENT_YEARMONTH
+FROM FATALITY
+LIMIT 3;
+")
+df3 <- dbFetch(res)
+dbClearResult(res)
+
+datatable(df3,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",
+          caption = "First 3 entries from FATALITY table",
+          escape = TRUE)
+
+dbDisconnect(con)
+```
+
+## Data Cleaning
+
+Brief description of data cleaning and aggregation.
+
+The data cleaning and aggregation process was done in several steps. First, the year was extracted from the FAT_EVENTYEAR column. Rows with missing or invalid years and missing sex information were removed. Age values were cleaned by removing non-numeric characters and converting them to numbers. Locations were trimmed, converted to uppercase, and empty values were replaced with "UNKNOWN". Records from non-continental U.S. areas like "GUAM" and "LAKE MICHIGAN" were excluded.
+
+Next, event types were grouped into broader categories such as "Flood", "Wind", and "Winter Weather" based on keywords. A custom function was used to convert damage values with "K", "M", or "B" into numeric format. Then, the dataset was grouped by event type. The total number of injuries, deaths, and damage costs were calculated for each group. The final result shows which event types had the greatest impact.
+
+Tools used: R, SQL, ggplot2 for plotting, library(DT) for visualizing tables.
+
+```{r error=FALSE, message= FALSE, warning=FALSE, eval=FALSE}
+#data cleaning
+F_all <- F_all %>%
+  # Convert age to numeric, handling non-numeric entries
+  mutate(FATALITY_AGE = as.numeric(gsub("[^0-9]", "", FATALITY_AGE))) %>%
+  # Clean location data
+  mutate(FATALITY_LOCATION = trimws(toupper(FATALITY_LOCATION)),
+         FATALITY_LOCATION = ifelse(FATALITY_LOCATION == "", "UNKNOWN", FATALITY_LOCATION)) 
+
+places_to_remove <- c(
+  "VIRGIN ISLANDS", "PUERTO RICO", "ST LAWRENCE R", "LAKE ONTARIO",
+  "LAKE ST CLAIR", "LAKE SUPERIOR", "HAWAII WATERS", "LAKE ERIE",
+  "LAKE HURON", "LAKE MICHIGAN", "DISTRICT OF COLUMBIA", "E PACIFIC",
+  "GUAM WATERS", "GULF OF ALASKA", "GULF OF MEXICO", "AMERICAN SAMOA",
+  "ATLANTIC NORTH", "ATLANTIC SOUTH", "GUAM"
+)
+  
+
+# Number of Events by Year and Event Type
+library(dplyr)
+library(ggplot2)
+library (DT)
+
+# Group similar events into broader categories
+D_all <- D_all %>%
+  mutate(EVENT_GROUP = case_when(
+    grepl("Flood|Flash Flood|Coastal Flood|Lakeshore Flood", EVENT_TYPE, ignore.case = TRUE) ~ "Flood",
+    grepl("Wind|Thunderstorm Wind|Strong Wind|High Wind|Marine High Wind|Marine Strong Wind|Tropical Storm", EVENT_TYPE, ignore.case = TRUE) ~ "Wind",
+    grepl("Tornado|Hurricane|Typhoon|Tropical Depression", EVENT_TYPE, ignore.case = TRUE) ~ "Tornado/Hurricane",
+    grepl("Snow|Winter|Blizzard|Sleet|Ice Storm|Freezing Fog", EVENT_TYPE, ignore.case = TRUE) ~ "Winter Weather",
+    grepl("Heat|Excessive Heat|Drought", EVENT_TYPE, ignore.case = TRUE) ~ "Heat/Drought",
+    grepl("Fire|Wildfire", EVENT_TYPE, ignore.case = TRUE) ~ "Fire",
+    grepl("Fog|Dense Fog|Marine Dense Fog", EVENT_TYPE, ignore.case = TRUE) ~ "Fog",
+    grepl("Dust|Debris", EVENT_TYPE, ignore.case = TRUE) ~ "Dust/Smoke",
+    grepl("Tsunami|Seiche|Rip Current|Marine", EVENT_TYPE, ignore.case = TRUE) ~ "Marine/Coastal",
+    TRUE ~ "Other"
+  ))
+
+# Summarize
+events_by_year_group <- D_all %>%
+  group_by(YEAR, EVENT_GROUP) %>%
+  summarise(Event_Count = n()) %>%
+  ungroup()
+```
+
+## Summary of Work
+
+Shrijana: Performed significant R analysis and data cleaning. Ensured all quantities in the data were numeric not text, adjusted date formatting, and cleaned location data. Created visually appealing R plots. Analyzed Storm events by year, event trends, fatalities by location, age/sex vs fatality rate, fatalities by year, hurricane/tornado/heavy snow, and property/crop damage. Explained all listed plots in the final report and all related code. 
+
+Aidan: Worked with the SQL database design and conversion from SQL to R code. Used SQL queries along with R code to do odds of injury/death adjusted for population generally and in the Northeast, most common event type per month for general and Northeast, and total fatalities by event type. Structured, introduced, summarized, and concluded in the final reports.
+
+## Additional Analysis
+
+Figure 2 displays a line chart depicting the trend of storm events by event group over the period from 2015 to 2024. Each line represents a distinct event category, such as Wind, Tornado/Hurricane, Flood, Fire, and others, with the number of events plotted against the years. Wind events (shown in pink) exhibit the highest frequency throughout the period, with a notable increase starting in 2022, reaching approximately 60,000 events by 2024. Other event types, including Tornado/Hurricane (purple), Winter Weather (red), and Other (blue), show moderate increases in 2024, while categories like Fire (orange), Flood (yellow), and Fog (green) remain relatively stable with lower event counts. The chart highlights a significant upward trend in Wind events compared to other storm categories over the decade.
+
+```{r, error=FALSE,message=FALSE, warning=FALSE}
+# Line plot
+ggplot(events_by_year_group, aes(x = YEAR, y = Event_Count, color = EVENT_GROUP)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Storm Events Trend by Group (2015-2024)",
+       x = "Year", y = "Number of Events",
+       color = "Event Group") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 12),
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", size = 14, hjust = 0.5))
+
+```
+
+Figure 1: line Plot
+
+In 2024, storm events (of all types) resulted in the highest fatalities between 2015 and 2024, with 297 females and 670 males affected (Table 2). In contrast, 2019 recorded the lowest fatalities over the same period, with 145 females and 398 males.
+
+Table 1: Summary of fatalities by sex
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+# Summary of fatalities by sex
+
+fatalities_by_sex <- F_all %>%
+  mutate(Year_Only = substr(FAT_YEARMONTH, 1, 4)) %>%
+  filter(!is.na(FATALITY_SEX)) %>%  # Remove rows where FATALITY_SEX is NA
+  group_by(Year_Only, FATALITY_SEX) %>%
+  summarise(Fatality_Count = n(), .groups = "drop")%>%
+  arrange(desc(Year_Only))
+
+datatable(fatalities_by_sex,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",       
+          caption = "Summary of fatalities by sex",
+          escape = TRUE)
+```
+
+These storm events occurred between 2015 and 2024 (Table 3). Arizona recorded the highest fatalities at 3,150, while Delaware had the lowest at 5. Texas saw the most injuries with 5,108, and Vermont the least with 8. Property damage was greatest in Texas at 70,609,626,840, and smallest in Delaware at 4,241,590. Crop damage peaked in Georgia at 3,136,484,570, with Delaware and Rhode Island reporting the least at \$0.
+
+Table 2:Summary of Hazardous (Hurricane) Weather
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+
+#Table Summary of Hazardous (Hurricane) Weather Fatalities(DEATHS_DIRECT + DEATHS_INDIRECT), 
+#Injuries (INJURIES_DIRECT + INJURIES_INDIRECT) , and Damage Costs(DAMAGE_PROPERTY, DAMAGE_CROP) Listed by State (STATE)
+
+places_to_remove <- c(
+  "VIRGIN ISLANDS", "PUERTO RICO", "ST LAWRENCE R", "LAKE ONTARIO",
+  "LAKE ST CLAIR", "LAKE SUPERIOR", "HAWAII WATERS", "LAKE ERIE",
+  "LAKE HURON", "LAKE MICHIGAN", "DISTRICT OF COLUMBIA", "E PACIFIC",
+  "GUAM WATERS", "GULF OF ALASKA", "GULF OF MEXICO", "AMERICAN SAMOA",
+  "ATLANTIC NORTH", "ATLANTIC SOUTH", "GUAM"
+)
+
+Storms_all <- D_all %>%  filter(!STATE %in% places_to_remove) %>%
+  mutate(
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY),
+    DAMAGE_CROP_NUM = convert_damage(DAMAGE_CROPS)
+  )
+
+
+#Summarize by State
+summary_table_Hurricane <- Storms_all %>%
+  group_by(STATE) %>%
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+datatable(summary_table_Hurricane,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",       
+          caption = "Summary of Hazardous (Hurricane) Weather",
+          escape = TRUE)
+```
+
+Between 2015 and 2024, heavy snow events led to the following impacts: Minnesota recorded the highest fatalities at 9, New Mexico saw the most injuries with 72, Oregon experienced the greatest property damage at \$159,154,000, and California had the highest crop damage at \$2,000,000.
+
+Table 4: Summary table for heavy snow data
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+Snow_damage <- Snow_damage %>%
+  mutate(
+    DAMAGE_PROPERTY_NUM = convert_damage(DAMAGE_PROPERTY),
+    DAMAGE_CROP_NUM = convert_damage(DAMAGE_CROPS)
+  )
+
+# Summary table for heavy snow data
+#Summarize by State
+summary_table_snow <- Snow_damage %>% filter(!STATE %in% places_to_remove) %>%
+  group_by(STATE) %>%
+  summarise(
+    Total_Fatalities = sum(DEATHS_DIRECT + DEATHS_INDIRECT, na.rm = TRUE),
+    Total_Injuries = sum(INJURIES_DIRECT + INJURIES_INDIRECT, na.rm = TRUE),
+    Total_Property_Damage = sum(DAMAGE_PROPERTY_NUM, na.rm = TRUE),
+    Total_Crop_Damage = sum(DAMAGE_CROP_NUM, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+datatable(summary_table_snow, 
+          options = list(), 
+          colnames = c("State", "Event", "Total Fatalities"), 
+          caption = "Summary for heavy snow data",
+          filter = "top", 
+          escape = TRUE)
+
+```
+
+From 2015 to 2024, Tornado events resulted in the following impacts: Mississippi recorded the highest fatalities at 83 and the most crop damage at 42 million, while Texas saw the greatest number of injuries at 1,265 and the highest property damage at 2.3 Billion (Table 5).
+
+Table 5: Summary table for Tornado from 2015 to 2024
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+datatable(summary_table_Tornado,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",       # You can change this to "bottom" or "none" if desired
+          caption = "summary table for Tornado from 2015 to 2024",
+          escape = TRUE)
+
+```
+
+Over the 10-year period from 2015 to 2024 in the Northeast states (Table 6), the highest number of fatalities (45) occurred in New York due to Blizzard. New Hampshire experienced the highest number of injuries (48) from thunderstorm winds, with an additional 52 injuries caused by tornadoes. The greatest property damage, totaling \$600,785,000, was recorded in New York from flash floods. The highest crop damage, amounting to \$61,500,000, occurred in New Hampshire as a result of drought.
+
+Table 6: Top 5 Property Damage Events per State
+
+```{r error=FALSE, message=FALSE, warning=FALSE}
+#Top 5 Fatality-Causing Events by State (Excluding Zeros)
+
+library(DT)
+
+top5_fatal_events_by_state <- northeast_summary_Event %>%
+  # Exclude zero fatalities
+  filter(Total_Fatalities > 0) %>%
+  
+  # Group by state and rank within each group
+  group_by(STATE) %>%
+    slice_head(n = 5) %>%
+  ungroup()
+
+datatable(top5_fatal_events_by_state,
+          options = list(pageLength = 10),
+          class = "display",
+          filter = "top",       # You can change this to "bottom" or "none" if desired
+          caption = "Top 5 Fatality-Causing Events by State",
+          escape = TRUE)
+
+
+```
+
+Cold/Wind Chill, blizzards, floods, thunderstorm winds, heavy snow, and excessive heat are the primary weather events responsible for the highest number of fatalities and injuries in the Northeastern states.
+
+New York and Pennsylvania has highest fatalities happen in 10 years in Northeastern states (Fig. 23) however total injuries were highest for Pennsylvania and New Jersey (Fig. 24).
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Bar Plot of Total Fatalities by State
+ggplot(northeast_summary, aes(x = reorder(STATE, -Total_Fatalities), y = Total_Fatalities)) +
+  geom_col(fill = "firebrick") +
+  labs(title = "Total Fatalities by Northeastern State",
+       x = "State", y = "Fatalities") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 23. Total Fatalities by Northeastern State.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Bar Plot of Total Injuries by State
+ggplot(northeast_summary, aes(x = reorder(STATE, -Total_Injuries), y = Total_Injuries)) +
+  geom_col(fill = "darkorange") +
+  labs(title = "Total Injuries by Northeastern State",
+       x = "State", y = "Injuries") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 24. Total Injuries by Northeastern State
+
+Over the past 10 years, New York and Pennsylvania experienced the highest property damage among the Northeastern states (Fig. 25); however, New Hampshire and Maine reported the highest total crop damage.
+
+```{r error=FALSE, message= FALSE, warning=FALSE}
+#Side-by-Side Plot: Property vs Crop Damage
+library(tidyr)
+
+damage_long <- northeast_summary %>%
+  select(STATE, Total_Property_Damage, Total_Crop_Damage) %>%
+  pivot_longer(cols = starts_with("Total_"), names_to = "Damage_Type", values_to = "Damage_Value") 
+
+ggplot(damage_long, aes(x = reorder(STATE, -Damage_Value), y = Damage_Value, fill = Damage_Type)) +
+  geom_col(position = "dodge") +
+  labs(title = "Property and Crop Damage by Northeastern State",
+       x = "State", y = "Damage ($)", fill = "Damage Type") +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Fig 25: Property and Crop Damage by Northeastern State
+
+## References
+
+**Census Bureau (2021)**. *2020 Census Apportionment Results*. Available at: <https://www.census.gov/data/tables/2020/dec/2020-apportionment-data.html> (Accessed: 2025).
+
+**Müller, K., Wickham, H., James, D.A., Falcon, S.** (2024). *RSQLite: SQLite Interface for R*. R package version 2.3.9, <https://CRAN.R-project.org/package=RSQLite>.
+
+**National Centers for Environmental Protection (1999)**. *Storm Events Database*. Asheville, N.C: National Centers for Environmental Information, National Oceanic and Atmospheric Administration. Available at: <https://www.ncdc.noaa.gov/stormevents/ftp.jsp> (Accessed: 2025).
+
+**R Special Interest Group on Databases (R-SIG-DB), Wickham, H., Müller, K.** (2024). *DBI: R Database Interface*. R package version 1.2.3, <https://CRAN.R-project.org/package=DBI>.
+
+**Wickham, H.** (2016). *ggplot2: Elegant Graphics for Data Analysis*. Springer-Verlag New York.
+
+**Wickham, H., François, R., Henry, L., Müller, K., Vaughan, D.** (2023). *dplyr: A Grammar of Data Manipulation*. R package version 1.1.4, <https://CRAN.R-project.org/package=dplyr>.
+
+**Wickham, H., Hester, J., Bryan, J.** (2024). *readr: Read Rectangular Text Data*. R package version 2.1.5, <https://CRAN.R-project.org/package=readr>.
+
+**Xie, Y., Cheng, J., Tan, X.** (2024). *DT: A Wrapper of the JavaScript Library 'DataTables'*. R package version 0.33, <https://CRAN.R-project.org/package=DT>.
+:::
